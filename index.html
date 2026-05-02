@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LogoAR — Tracker Avançado</title>
+    <link rel="stylesheet" href="style.css">
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+</head>
+
+<body>
+    <div id="loading-screen">
+        <div class="spinner"></div>
+        <p>Inicializando AR e Visão Computacional...</p>
+    </div>
+
+    <div id="error-overlay" hidden>
+        <h2>Não foi possível iniciar</h2>
+        <p class="error-message">Verifique a permissão da câmera.</p>
+        <button id="retry-button" type="button">Tentar novamente</button>
+    </div>
+
+    <video id="webcam-video" autoplay playsinline muted></video>
+    <canvas id="hand-canvas"></canvas>
+    <div id="canvas-container"></div>
+
+    <div id="ui-panel">
+        <div class="row mode-selector">
+            <label>
+                <input type="radio" name="ar-mode" value="presa" checked>
+                Modo Presa
+            </label>
+            <label>
+                <input type="radio" name="ar-mode" value="manipular">
+                Modo Manipular
+            </label>
+        </div>
+
+        <div class="row">
+            <span class="dot" id="hand-dot"></span>
+            <strong id="gesture-status">Aguardando mão...</strong>
+        </div>
+
+        <div class="row meta">
+            <span>Zoom: <b id="scale-value">1.00x</b></span>
+            <span>Estado: <b id="lock-status">livre</b></span>
+        </div>
+
+        <details class="legend">
+            <summary>Como usar os modos</summary>
+            <ul>
+                <li><b>Modo Presa:</b> A logo gruda na palma da sua mão. Feche o punho para travar no ar.</li>
+                <li><b>Modo Manipular:</b> Junte o polegar e o indicador perto da logo para "pegá-la". Afaste os dedos
+                    para aumentar, junte para diminuir. Abra totalmente a mão para soltar no ar.</li>
+            </ul>
+        </details>
+
+        <div class="row buttons">
+            <button id="reset-button" type="button">Resetar Posição</button>
+            <button id="skeleton-toggle" type="button" aria-pressed="true">Esconder esqueleto</button>
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module" src="main.js"></script>
+</body>
+
+</html>
