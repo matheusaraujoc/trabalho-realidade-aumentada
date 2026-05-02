@@ -14,22 +14,23 @@ const scaleValue = document.getElementById('scale-value');
 const lockStatus = document.getElementById('lock-status');
 const resetButton = document.getElementById('reset-button');
 const skeletonToggle = document.getElementById('skeleton-toggle');
+const menuToggle = document.getElementById('menu-toggle');
+const uiPanel = document.getElementById('ui-panel');
 const retryButton = document.getElementById('retry-button');
 const modeRadios = document.querySelectorAll('input[name="ar-mode"]');
 
-// --- Constantes de mapeamento ---
+// --- Constantes de mapeamento (Ajustadas para Anti-Tremor) ---
 const FIXED_DEPTH = -4;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 2.6;
 const PALM_NEAR = 0.30;
 const PALM_FAR = 0.06;
-const POSITION_LERP = 0.22;
-const ROTATION_LERP = 0.20;
-const SCALE_LERP = 0.18;
+const POSITION_LERP = 0.08;  // Suavidade de movimento
+const ROTATION_LERP = 0.06;  // Suavidade de rotação
+const SCALE_LERP = 0.08;     // Suavidade de zoom
 const HAND_LOST_FRAMES = 12;
 
-// Limite de distância entre polegar e indicador para o modo "Manipular"
-// Se a distância for menor que isso, a logo é pega. Acima disso, é solta.
+// Limite de distância entre polegar e indicador para "Pegar" (Pinça)
 const PINCH_DROP_THRESHOLD = 0.18;
 
 // --- Estado ---
@@ -40,9 +41,10 @@ const state = {
     handVisible: false,
     framesSinceHand: 0,
     gesture: 'idle',
-    locked: false, // Usado no modo 'presa' (punho fechado)
-    manipulateGrabbed: false, // Usado no modo 'manipular'
+    locked: false,
+    manipulateGrabbed: false,
     showSkeleton: true,
+    menuHidden: false,
 
     targetScale: 1,
     currentScale: 1,
@@ -51,7 +53,6 @@ const state = {
 };
 
 // --- Otimização de Memória (Garbage Collection) ---
-// Instanciar vetores globalmente impede que o navegador crie lixo de memória a cada frame
 const _vResult = new THREE.Vector3();
 const _vDir = new THREE.Vector3();
 const _wrist = new THREE.Vector3();
@@ -62,7 +63,6 @@ const _up = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _forward = new THREE.Vector3();
 const _mat4 = new THREE.Matrix4();
-// Opcional: Se a logo importar deitada por padrão, altere este Euler.
 const _baseOffsetQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0));
 
 // --- Three.js ---
@@ -175,7 +175,6 @@ function fingerExtended(lm, tip, pip, mcp) {
     return dist3(lm[tip], lm[mcp]) > dist3(lm[pip], lm[mcp]) * 1.05;
 }
 
-// Projeta posição 2D para 3D reutilizando vetores
 function projectToWorld(nx, ny, depth) {
     _vResult.set((nx * 2) - 1, -(ny * 2) + 1, 0.5);
     _vResult.unproject(camera);
@@ -183,37 +182,25 @@ function projectToWorld(nx, ny, depth) {
     return _vResult.copy(camera.position).add(_vDir.multiplyScalar(Math.abs(depth)));
 }
 
-// Cálculo ABSOLUTO do Quaternion (Resolve o bug de "Deitar" e "Inverter" de mão)
 function computeHandQuaternion(wlm, handednessLabel) {
-    // Invertemos para casar com a câmera espelhada e sistema destro do Three
     _wrist.set(-wlm[0].x, -wlm[0].y, -wlm[0].z);
     _middleMcp.set(-wlm[9].x, -wlm[9].y, -wlm[9].z);
     _indexMcp.set(-wlm[5].x, -wlm[5].y, -wlm[5].z);
     _pinkyMcp.set(-wlm[17].x, -wlm[17].y, -wlm[17].z);
 
-    // Eixo Y (Cima)
     _up.subVectors(_middleMcp, _wrist).normalize();
-
-    // Eixo X (Direita)
     _right.subVectors(_indexMcp, _pinkyMcp).normalize();
 
-    // Correção de Mão (Resolve o Bug de Inverter a Logo quando troca de mão)
-    // Se o mediapipe acusa "Left" (o que visualmente é a mão Direita no espelho),
-    // o vetor Index->Pinky aponta para o lado oposto. Invertemos para corrigir.
     if (handednessLabel === 'Left') {
         _right.negate();
     }
 
-    // Eixo Z (Frente) = Direita X Cima
     _forward.crossVectors(_right, _up).normalize();
-
-    // Reortogonaliza a Direita para garantir 90 graus perfeitos
     _right.crossVectors(_up, _forward).normalize();
 
     _mat4.makeBasis(_right, _up, _forward);
 
     const q = new THREE.Quaternion().setFromRotationMatrix(_mat4);
-    // Aplica o offset base caso o modelo precise (Geralmente 0,0,0)
     q.multiply(_baseOffsetQuat);
 
     return q;
@@ -224,7 +211,6 @@ function computeHandQuaternion(wlm, handednessLabel) {
 function updateModePresa(lm, wlm, handednessLabel) {
     const palm = lm[9];
 
-    // Verifica Punho
     const indexExt = fingerExtended(lm, 8, 6, 5);
     const middleExt = fingerExtended(lm, 12, 10, 9);
     const ringExt = fingerExtended(lm, 16, 14, 13);
@@ -251,25 +237,20 @@ function updateModeManipular(lm, wlm, handednessLabel) {
     const indexTip = lm[8];
     const pinchDist = dist3(thumbTip, indexTip);
 
-    // Se os dedos estão próximos, a logo está "Pega"
     if (pinchDist < PINCH_DROP_THRESHOLD) {
         state.manipulateGrabbed = true;
 
-        // A posição passa a ser o MEIO entre o polegar e o indicador
         const midX = (thumbTip.x + indexTip.x) / 2;
         const midY = (thumbTip.y + indexTip.y) / 2;
         state.targetPosition.copy(projectToWorld(1 - midX, midY, FIXED_DEPTH));
 
-        // A ESCALA é dada diretamente pela distância dos dedos (Pinça abre e fecha)
-        const scaleFactor = pinchDist / PINCH_DROP_THRESHOLD; // 0.0 a 1.0
-        // Mapeia para limites seguros
+        const scaleFactor = pinchDist / PINCH_DROP_THRESHOLD;
         state.targetScale = THREE.MathUtils.lerp(MIN_SCALE * 0.5, MAX_SCALE * 1.5, scaleFactor);
 
         if (wlm && wlm.length === 21) {
             state.targetQuaternion.copy(computeHandQuaternion(wlm, handednessLabel));
         }
     } else {
-        // Se abriu a mão muito, "Solta" a logo
         state.manipulateGrabbed = false;
     }
 }
@@ -284,7 +265,7 @@ function onResults(results) {
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const lm = results.multiHandLandmarks[0];
         const wlm = results.multiHandWorldLandmarks?.[0];
-        const handednessLabel = results.multiHandedness[0].label; // 'Left' ou 'Right'
+        const handednessLabel = results.multiHandedness[0].label;
 
         state.handVisible = true;
         state.framesSinceHand = 0;
@@ -331,7 +312,7 @@ function drawSkeleton(results) {
 
     let color = '#4ade80';
     if (state.mode === 'presa' && state.locked) color = '#f87171';
-    if (state.mode === 'manipular' && state.manipulateGrabbed) color = '#3b82f6'; // Azul quando pego
+    if (state.mode === 'manipular' && state.manipulateGrabbed) color = '#3b82f6';
 
     handCtx.strokeStyle = color;
     handCtx.lineWidth = 3;
@@ -374,7 +355,7 @@ function updateUi() {
     handDot.classList.toggle('active', state.handVisible);
 
     if (state.mode === 'presa') {
-        lockStatus.textContent = state.locked ? 'travado' : 'livindo';
+        lockStatus.textContent = state.locked ? 'travado' : 'livre';
     } else {
         lockStatus.textContent = state.manipulateGrabbed ? 'segurando' : 'livre';
     }
@@ -408,7 +389,7 @@ async function initMediaPipe() {
         maxNumHands: 1,
         modelComplexity: 1,
         minDetectionConfidence: 0.7,
-        minTrackingConfidence: 0.7,
+        minTrackingConfidence: 0.85, // Confiança aumentada contra oscilações
     });
     hands.onResults(onResults);
 
@@ -455,26 +436,46 @@ skeletonToggle.addEventListener('click', () => {
     if (!state.showSkeleton) handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
 });
 
+menuToggle.addEventListener('click', () => {
+    state.menuHidden = !state.menuHidden;
+    uiPanel.classList.toggle('is-hidden', state.menuHidden);
+    uiPanel.inert = state.menuHidden;
+    uiPanel.setAttribute('aria-hidden', String(state.menuHidden));
+    menuToggle.textContent = state.menuHidden ? 'Mostrar menu' : 'Esconder menu';
+    menuToggle.setAttribute('aria-expanded', String(!state.menuHidden));
+});
+
 retryButton.addEventListener('click', () => location.reload());
 
-// --- Loop ---
+// --- Loop Principal (Com Deadzone Anti-Tremor) ---
 
 function animate() {
     requestAnimationFrame(animate);
 
     if (modelRoot) {
-        // Se estiver no modo presa e solto, OU manipular e agarrado: Movimenta
         const canMove = (state.mode === 'presa' && !state.locked) ||
             (state.mode === 'manipular' && state.manipulateGrabbed);
 
         if (canMove && state.handVisible) {
-            modelRoot.position.lerp(state.targetPosition, POSITION_LERP);
-            modelRoot.quaternion.slerp(state.targetQuaternion, ROTATION_LERP);
+            // Filtro Deadzone Espacial
+            const posDiff = modelRoot.position.distanceTo(state.targetPosition);
+            if (posDiff > 0.01) {
+                modelRoot.position.lerp(state.targetPosition, POSITION_LERP);
+            }
+
+            // Filtro Deadzone Rotacional
+            const rotDiff = modelRoot.quaternion.angleTo(state.targetQuaternion);
+            if (rotDiff > 0.02) {
+                modelRoot.quaternion.slerp(state.targetQuaternion, ROTATION_LERP);
+            }
         }
 
-        state.currentScale += (state.targetScale - state.currentScale) * SCALE_LERP;
-        modelRoot.scale.setScalar(state.currentScale);
-        scaleValue.textContent = state.currentScale.toFixed(2) + 'x';
+        // Filtro Deadzone Escala
+        if (Math.abs(state.targetScale - state.currentScale) > 0.005) {
+            state.currentScale += (state.targetScale - state.currentScale) * SCALE_LERP;
+            modelRoot.scale.setScalar(state.currentScale);
+            scaleValue.textContent = state.currentScale.toFixed(2) + 'x';
+        }
     }
 
     renderer.render(scene, camera);

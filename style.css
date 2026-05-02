@@ -74,6 +74,20 @@ body {
     display: flex;
     flex-direction: column;
     gap: 10px;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+#ui-panel.is-hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%) translateY(16px);
+}
+
+#menu-toggle {
+    position: absolute;
+    right: 24px;
+    top: 24px;
+    z-index: 5;
 }
 
 .row {
@@ -92,28 +106,6 @@ body {
 .row.meta b {
     color: var(--text);
     font-weight: 600;
-}
-
-/* --- Seletor de Modo --- */
-.mode-selector {
-    background: rgba(0, 0, 0, 0.3);
-    padding: 6px;
-    border-radius: 8px;
-    justify-content: center;
-    gap: 15px;
-    margin-bottom: 5px;
-}
-
-.mode-selector label {
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-weight: 500;
-}
-
-.mode-selector input {
-    accent-color: var(--accent);
 }
 
 .dot {
@@ -260,5 +252,10 @@ button:active {
         width: calc(100vw - 24px);
         bottom: 12px;
         font-size: 13px;
+    }
+
+    #menu-toggle {
+        right: 12px;
+        top: 12px;
     }
 }

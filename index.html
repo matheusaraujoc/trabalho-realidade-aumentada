@@ -7,8 +7,8 @@
     <title>LogoAR — Tracker Avançado</title>
     <link rel="stylesheet" href="style.css">
 
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous" defer></script>
 </head>
 
 <body>
@@ -23,9 +23,11 @@
         <button id="retry-button" type="button">Tentar novamente</button>
     </div>
 
-    <video id="webcam-video" autoplay playsinline muted></video>
+    <video id="webcam-video" autoplay playsinline muted aria-hidden="true"></video>
     <canvas id="hand-canvas"></canvas>
     <div id="canvas-container"></div>
+
+    <button id="menu-toggle" type="button" aria-controls="ui-panel" aria-expanded="true">Esconder menu</button>
 
     <div id="ui-panel">
         <div class="row mode-selector">
