@@ -27,6 +27,7 @@ body {
     user-select: none;
 }
 
+/* --- Rastreamento de Mão (MediaPipe) --- */
 #webcam-video,
 #hand-canvas,
 #canvas-container {
@@ -55,6 +56,21 @@ body {
     pointer-events: none;
 }
 
+/* --- Rastreamento de Imagem (MindAR) --- */
+#mindar-container {
+    position: absolute;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 4;
+    /* Fica acima do MediaPipe, mas abaixo da Interface UI */
+    overflow: hidden;
+}
+
+#mindar-container.hidden {
+    display: none !important;
+}
+
 /* --- UI --- */
 #ui-panel {
     position: absolute;
@@ -69,7 +85,8 @@ body {
     backdrop-filter: blur(10px);
     min-width: 320px;
     max-width: calc(100vw - 32px);
-    z-index: 4;
+    /* Z-Index super alto para não ser sobreposto pelas UIs internas do MindAR */
+    z-index: 999;
     font-size: 14px;
     display: flex;
     flex-direction: column;
@@ -87,7 +104,7 @@ body {
     position: absolute;
     right: 24px;
     top: 24px;
-    z-index: 5;
+    z-index: 999;
 }
 
 .row {
@@ -196,7 +213,7 @@ button:active {
     justify-content: center;
     align-items: center;
     color: white;
-    z-index: 10;
+    z-index: 10000;
     transition: opacity 0.5s ease;
 }
 
@@ -227,7 +244,7 @@ button:active {
     align-items: center;
     gap: 16px;
     color: white;
-    z-index: 11;
+    z-index: 10001;
     padding: 24px;
     text-align: center;
 }
@@ -246,6 +263,7 @@ button:active {
     max-width: 380px;
 }
 
+/* --- Responsividade --- */
 @media (max-width: 480px) {
     #ui-panel {
         min-width: unset;
@@ -258,4 +276,10 @@ button:active {
         right: 12px;
         top: 12px;
     }
+}
+
+/* Desativa o espelhamento automático do MindAR em webcams (câmeras frontais) */
+#mindar-container video,
+#mindar-container canvas {
+    transform: none !important;
 }

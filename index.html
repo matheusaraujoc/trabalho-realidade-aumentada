@@ -4,17 +4,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LogoAR — Tracker Avançado</title>
+    <title>LogoAR — Tracker Híbrido</title>
     <link rel="stylesheet" href="style.css">
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"
+        defer></script>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.147.0/examples/jsm/",
+                "mindar-image-three": "https://unpkg.com/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+            }
+        }
+    </script>
 </head>
 
 <body>
     <div id="loading-screen">
         <div class="spinner"></div>
-        <p>Inicializando AR e Visão Computacional...</p>
+        <p id="loading-text">Inicializando AR e Visão Computacional...</p>
     </div>
 
     <div id="error-overlay" hidden>
@@ -27,23 +38,29 @@
     <canvas id="hand-canvas"></canvas>
     <div id="canvas-container"></div>
 
+    <div id="mindar-container" class="hidden"></div>
+
     <button id="menu-toggle" type="button" aria-controls="ui-panel" aria-expanded="true">Esconder menu</button>
 
     <div id="ui-panel">
         <div class="row mode-selector">
             <label>
                 <input type="radio" name="ar-mode" value="presa" checked>
-                Modo Presa
+                Mão: Presa
             </label>
             <label>
                 <input type="radio" name="ar-mode" value="manipular">
-                Modo Manipular
+                Mão: Manipular
+            </label>
+            <label>
+                <input type="radio" name="ar-mode" value="imagem">
+                Modo Imagem
             </label>
         </div>
 
         <div class="row">
             <span class="dot" id="hand-dot"></span>
-            <strong id="gesture-status">Aguardando mão...</strong>
+            <strong id="gesture-status">Aguardando câmera...</strong>
         </div>
 
         <div class="row meta">
@@ -56,7 +73,8 @@
             <ul>
                 <li><b>Modo Presa:</b> A logo gruda na palma da sua mão. Feche o punho para travar no ar.</li>
                 <li><b>Modo Manipular:</b> Junte o polegar e o indicador perto da logo para "pegá-la". Afaste os dedos
-                    para aumentar, junte para diminuir. Abra totalmente a mão para soltar no ar.</li>
+                    para aumentar, junte para diminuir.</li>
+                <li><b>Modo Imagem:</b> Aponte a câmera para o marcador configurado para projetar a logo sobre ele.</li>
             </ul>
         </details>
 
@@ -66,14 +84,6 @@
         </div>
     </div>
 
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
-        }
-    </script>
     <script type="module" src="main.js"></script>
 </body>
 

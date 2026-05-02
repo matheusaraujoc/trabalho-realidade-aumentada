@@ -1,17 +1,22 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MindARThree } from 'mindar-image-three';
 
 // --- DOM ---
 const videoEl = document.getElementById('webcam-video');
 const handCanvas = document.getElementById('hand-canvas');
 const handCtx = handCanvas.getContext('2d');
 const container = document.getElementById('canvas-container');
+const mindarContainer = document.getElementById('mindar-container');
+
 const loadingScreen = document.getElementById('loading-screen');
+const loadingText = document.getElementById('loading-text');
 const errorOverlay = document.getElementById('error-overlay');
 const gestureStatus = document.getElementById('gesture-status');
 const handDot = document.getElementById('hand-dot');
 const scaleValue = document.getElementById('scale-value');
 const lockStatus = document.getElementById('lock-status');
+
 const resetButton = document.getElementById('reset-button');
 const skeletonToggle = document.getElementById('skeleton-toggle');
 const menuToggle = document.getElementById('menu-toggle');
@@ -19,23 +24,21 @@ const uiPanel = document.getElementById('ui-panel');
 const retryButton = document.getElementById('retry-button');
 const modeRadios = document.querySelectorAll('input[name="ar-mode"]');
 
-// --- Constantes de mapeamento (Ajustadas para Anti-Tremor) ---
+// --- Constantes ---
 const FIXED_DEPTH = -4;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 2.6;
 const PALM_NEAR = 0.30;
 const PALM_FAR = 0.06;
-const POSITION_LERP = 0.08;  // Suavidade de movimento
-const ROTATION_LERP = 0.06;  // Suavidade de rotação
-const SCALE_LERP = 0.08;     // Suavidade de zoom
+const POSITION_LERP = 0.08;
+const ROTATION_LERP = 0.06;
+const SCALE_LERP = 0.08;
 const HAND_LOST_FRAMES = 12;
-
-// Limite de distância entre polegar e indicador para "Pegar" (Pinça)
 const PINCH_DROP_THRESHOLD = 0.18;
 
-// --- Estado ---
+// --- Estado Global ---
 const state = {
-    mode: 'presa', // 'presa' | 'manipular'
+    mode: 'presa', // 'presa' | 'manipular' | 'imagem'
     modelLoaded: false,
     cameraReady: false,
     handVisible: false,
@@ -52,7 +55,7 @@ const state = {
     targetQuaternion: new THREE.Quaternion(),
 };
 
-// --- Otimização de Memória (Garbage Collection) ---
+// --- Otimização de Memória ---
 const _vResult = new THREE.Vector3();
 const _vDir = new THREE.Vector3();
 const _wrist = new THREE.Vector3();
@@ -65,50 +68,76 @@ const _forward = new THREE.Vector3();
 const _mat4 = new THREE.Matrix4();
 const _baseOffsetQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0));
 
-// --- Three.js ---
-let scene, camera, renderer, modelRoot;
+// --- Cenas AR ---
+let baseScene, baseCamera, baseRenderer; // Cena MediaPipe
+let mindarThree, mindarAnchor;           // Cena MindAR
+let modelRoot;
+let cameraHelper;
 
-function initThree() {
-    scene = new THREE.Scene();
+// ==========================================
+// 1. Configuração do Three.js (MediaPipe)
+// ==========================================
+function initBaseThree() {
+    baseScene = new THREE.Scene();
 
-    camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-    camera.position.set(0, 0, 0);
+    baseCamera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+    baseCamera.position.set(0, 0, 0);
 
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    container.appendChild(renderer.domElement);
+    baseRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    baseRenderer.setSize(window.innerWidth, window.innerHeight);
+    baseRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    // Corrigido para a versão r147 do Three.js (compatibilidade com MindAR)
+    baseRenderer.outputEncoding = THREE.sRGBEncoding;
+    baseRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+    baseRenderer.toneMappingExposure = 1.0;
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
-    keyLight.position.set(2, 4, 3);
-    keyLight.castShadow = true;
-    keyLight.shadow.mapSize.set(1024, 1024);
-    keyLight.shadow.camera.near = 0.5;
-    keyLight.shadow.camera.far = 20;
-    scene.add(keyLight);
+    container.appendChild(baseRenderer.domElement);
 
-    const fillLight = new THREE.DirectionalLight(0x88aaff, 0.6);
-    fillLight.position.set(-3, 2, -2);
-    scene.add(fillLight);
-
-    const rimLight = new THREE.DirectionalLight(0xffaa66, 0.4);
-    rimLight.position.set(0, -2, -4);
-    scene.add(rimLight);
-
-    loadModel();
-
+    setupLights(baseScene);
     window.addEventListener('resize', onResize);
     onResize();
-    animate();
 }
 
+function setupLights(sceneObj) {
+    sceneObj.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
+    keyLight.position.set(2, 4, 3);
+    sceneObj.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0x88aaff, 0.6);
+    fillLight.position.set(-3, 2, -2);
+    sceneObj.add(fillLight);
+    const rimLight = new THREE.DirectionalLight(0xffaa66, 0.4);
+    rimLight.position.set(0, -2, -4);
+    sceneObj.add(rimLight);
+}
+
+// ==========================================
+// 2. Configuração do MindAR (Image Tracking)
+// ==========================================
+function initMindAR() {
+    mindarThree = new MindARThree({
+        container: mindarContainer,
+        imageTargetSrc: 'assets/targets.mind',
+
+        // Remove completamente qualquer UI injetada pelo MindAR
+        uiLoading: 'no',
+        uiScanning: 'no',
+        uiError: 'no',
+
+        // Filtro Anti-Tremor (1 Euro Filter)
+        // Valores ajustados para estabilidade máxima
+        filterMinCF: 0.0001, // Filtro de corte (quanto menor, mais suave, elimina os tremores minúsculos)
+        filterBeta: 0.001    // Responsividade (compensa o atraso gerado pelo filtroMinCF)
+    });
+
+    setupLights(mindarThree.scene);
+    mindarAnchor = mindarThree.addAnchor(0);
+}
+
+// ==========================================
+// 3. Carregamento do Modelo
+// ==========================================
 function loadModel() {
     const loader = new GLTFLoader();
     loader.load('assets/logo.glb', (gltf) => {
@@ -124,15 +153,10 @@ function loadModel() {
 
         modelRoot = new THREE.Group();
         modelRoot.add(inner);
-        modelRoot.position.copy(state.targetPosition);
-        scene.add(modelRoot);
 
-        modelRoot.traverse((node) => {
-            if (node.isMesh) {
-                node.castShadow = true;
-                node.receiveShadow = true;
-            }
-        });
+        // Inicia na cena base (Mãos)
+        modelRoot.position.copy(state.targetPosition);
+        baseScene.add(modelRoot);
 
         state.modelLoaded = true;
         maybeHideLoading();
@@ -142,11 +166,86 @@ function loadModel() {
     });
 }
 
+// ==========================================
+// 4. Lógica de Transição (O Core do Híbrido)
+// ==========================================
+async function switchMode(newMode) {
+    if (state.mode === newMode) return;
+    const oldMode = state.mode;
+    state.mode = newMode;
+
+    loadingText.textContent = newMode === 'imagem' ? "Iniciando Rastreamento de Imagem..." : "Iniciando Rastreamento de Mãos...";
+    loadingScreen.style.display = 'flex';
+    loadingScreen.style.opacity = '1';
+
+    try {
+        // Desmontar Rastreamento de Imagem
+        if (oldMode === 'imagem') {
+            mindarThree.stop();
+            mindarContainer.classList.add('hidden');
+
+            // Reativa UI da mão
+            videoEl.style.display = 'block';
+            handCanvas.style.display = 'block';
+            container.style.display = 'block';
+
+            // Devolve modelo para a cena base
+            baseScene.add(modelRoot);
+            state.targetPosition.set(0, 0, FIXED_DEPTH);
+            modelRoot.position.copy(state.targetPosition);
+
+            // Re-inicia câmera frontal
+            await cameraHelper.start();
+        }
+
+        // Montar Rastreamento de Imagem
+        else if (newMode === 'imagem') {
+            // Desliga câmera frontal
+            if (cameraHelper) {
+                cameraHelper.stop();
+                const stream = videoEl.srcObject;
+                if (stream) stream.getTracks().forEach(t => t.stop());
+            }
+
+            // Esconde UI da mão
+            videoEl.style.display = 'none';
+            handCanvas.style.display = 'none';
+            container.style.display = 'none';
+            state.handVisible = false;
+            handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+
+            mindarContainer.classList.remove('hidden');
+
+            // Move modelo para a âncora do MindAR
+            mindarAnchor.group.add(modelRoot);
+
+            // No MindAR, as coordenadas são relativas ao marcador (0,0,0)
+            modelRoot.position.set(0, 0, 0);
+            modelRoot.quaternion.identity();
+
+            await mindarThree.start();
+        }
+
+        updateUi();
+    } catch (error) {
+        console.error(error);
+        showError("Falha ao alternar as câmeras. Recarregue a página.");
+    } finally {
+        setTimeout(() => {
+            loadingScreen.style.opacity = '0';
+            setTimeout(() => loadingScreen.style.display = 'none', 500);
+        }, 800);
+    }
+}
+
+// ==========================================
+// Utils & MediaPipe Core
+// ==========================================
 function onResize() {
     const w = window.innerWidth, h = window.innerHeight;
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
+    baseCamera.aspect = w / h;
+    baseCamera.updateProjectionMatrix();
+    baseRenderer.setSize(w, h);
     handCanvas.width = w;
     handCanvas.height = h;
 }
@@ -164,8 +263,6 @@ function showError(msg) {
     errorOverlay.hidden = false;
 }
 
-// --- Helpers de geometria ---
-
 function dist3(a, b) {
     const dx = a.x - b.x, dy = a.y - b.y, dz = (a.z || 0) - (b.z || 0);
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
@@ -177,9 +274,9 @@ function fingerExtended(lm, tip, pip, mcp) {
 
 function projectToWorld(nx, ny, depth) {
     _vResult.set((nx * 2) - 1, -(ny * 2) + 1, 0.5);
-    _vResult.unproject(camera);
-    _vDir.copy(_vResult).sub(camera.position).normalize();
-    return _vResult.copy(camera.position).add(_vDir.multiplyScalar(Math.abs(depth)));
+    _vResult.unproject(baseCamera);
+    _vDir.copy(_vResult).sub(baseCamera.position).normalize();
+    return _vResult.copy(baseCamera.position).add(_vDir.multiplyScalar(Math.abs(depth)));
 }
 
 function computeHandQuaternion(wlm, handednessLabel) {
@@ -197,7 +294,6 @@ function computeHandQuaternion(wlm, handednessLabel) {
 
     _forward.crossVectors(_right, _up).normalize();
     _right.crossVectors(_up, _forward).normalize();
-
     _mat4.makeBasis(_right, _up, _forward);
 
     const q = new THREE.Quaternion().setFromRotationMatrix(_mat4);
@@ -205,8 +301,6 @@ function computeHandQuaternion(wlm, handednessLabel) {
 
     return q;
 }
-
-// --- Atualização por Modo ---
 
 function updateModePresa(lm, wlm, handednessLabel) {
     const palm = lm[9];
@@ -255,12 +349,10 @@ function updateModeManipular(lm, wlm, handednessLabel) {
     }
 }
 
-// --- Resultados MediaPipe ---
-
 function onResults(results) {
     drawSkeleton(results);
 
-    if (!state.modelLoaded || !modelRoot) return;
+    if (!state.modelLoaded || !modelRoot || state.mode === 'imagem') return;
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const lm = results.multiHandLandmarks[0];
@@ -273,11 +365,10 @@ function onResults(results) {
         if (state.mode === 'presa') {
             updateModePresa(lm, wlm, handednessLabel);
             state.gesture = state.locked ? 'fist' : 'move';
-        } else {
+        } else if (state.mode === 'manipular') {
             updateModeManipular(lm, wlm, handednessLabel);
             state.gesture = state.manipulateGrabbed ? 'grabbed' : 'dropped';
         }
-
         updateUi();
     } else {
         state.framesSinceHand++;
@@ -291,8 +382,6 @@ function onResults(results) {
     }
 }
 
-// --- Esqueleto (canvas overlay) ---
-
 const HAND_CONNECTIONS = [
     [0, 1], [1, 2], [2, 3], [3, 4],
     [0, 5], [5, 6], [6, 7], [7, 8],
@@ -304,7 +393,7 @@ const HAND_CONNECTIONS = [
 
 function drawSkeleton(results) {
     handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
-    if (!state.showSkeleton) return;
+    if (!state.showSkeleton || state.mode === 'imagem') return;
     if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return;
 
     const lm = results.multiHandLandmarks[0];
@@ -331,24 +420,30 @@ function drawSkeleton(results) {
     }
 }
 
-// --- HUD ---
-
-const GESTURE_LABELS = {
-    idle: 'Aguardando mão...',
-    move: 'Preso na mão',
-    fist: 'Travado no ar',
-    grabbed: 'Pinça: Movendo/Zoom',
-    dropped: 'Solto no ar'
-};
-const GESTURE_COLORS = {
-    idle: '#94a3b8',
-    move: '#4ade80',
-    fist: '#f87171',
-    grabbed: '#3b82f6',
-    dropped: '#94a3b8'
-};
-
 function updateUi() {
+    if (state.mode === 'imagem') {
+        gestureStatus.textContent = 'Procurando Imagem...';
+        gestureStatus.style.color = '#eab308';
+        lockStatus.textContent = 'rastreando cena';
+        handDot.classList.remove('active');
+        return;
+    }
+
+    const GESTURE_LABELS = {
+        idle: 'Aguardando mão...',
+        move: 'Preso na mão',
+        fist: 'Travado no ar',
+        grabbed: 'Pinça: Movendo/Zoom',
+        dropped: 'Solto no ar'
+    };
+    const GESTURE_COLORS = {
+        idle: '#94a3b8',
+        move: '#4ade80',
+        fist: '#f87171',
+        grabbed: '#3b82f6',
+        dropped: '#94a3b8'
+    };
+
     const g = state.gesture;
     gestureStatus.textContent = GESTURE_LABELS[g] || g;
     gestureStatus.style.color = GESTURE_COLORS[g] || '#fff';
@@ -361,40 +456,30 @@ function updateUi() {
     }
 }
 
-// --- Câmera + MediaPipe ---
-
-let cameraHelper;
-
 async function initMediaPipe() {
     if (typeof Hands !== 'function' || typeof Camera !== 'function') {
-        showError('Bibliotecas do MediaPipe não carregaram. Verifique a conexão.');
-        return;
-    }
-
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 1280, height: 720, facingMode: 'user' },
-            audio: false,
-        });
-        stream.getTracks().forEach((t) => t.stop());
-    } catch (err) {
-        showError('Permissão da câmera negada ou nenhuma disponível.');
+        showError('Bibliotecas do MediaPipe não carregaram.');
         return;
     }
 
     const hands = new Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
+
     hands.setOptions({
         maxNumHands: 1,
         modelComplexity: 1,
         minDetectionConfidence: 0.7,
-        minTrackingConfidence: 0.85, // Confiança aumentada contra oscilações
+        minTrackingConfidence: 0.85,
     });
     hands.onResults(onResults);
 
     cameraHelper = new Camera(videoEl, {
-        onFrame: async () => { await hands.send({ image: videoEl }); },
+        onFrame: async () => {
+            if (state.mode !== 'imagem') {
+                await hands.send({ image: videoEl });
+            }
+        },
         width: 1280,
         height: 720,
     });
@@ -404,25 +489,24 @@ async function initMediaPipe() {
         state.cameraReady = true;
         maybeHideLoading();
     } catch (err) {
-        showError('Não foi possível iniciar a câmera.');
+        showError('Não foi possível iniciar a câmera frontal.');
     }
 }
 
 // --- Event Listeners ---
-
 modeRadios.forEach(radio => {
     radio.addEventListener('change', (e) => {
-        state.mode = e.target.value;
-        state.locked = false;
-        state.manipulateGrabbed = false;
-        updateUi();
+        switchMode(e.target.value);
     });
 });
 
 resetButton.addEventListener('click', () => {
+    if (state.mode === 'imagem') return;
+
     state.targetPosition.set(0, 0, FIXED_DEPTH);
     state.targetQuaternion.identity();
     state.targetScale = 1;
+
     if (modelRoot && !state.handVisible) {
         modelRoot.position.copy(state.targetPosition);
         modelRoot.quaternion.copy(state.targetQuaternion);
@@ -433,7 +517,10 @@ skeletonToggle.addEventListener('click', () => {
     state.showSkeleton = !state.showSkeleton;
     skeletonToggle.textContent = state.showSkeleton ? 'Esconder esqueleto' : 'Mostrar esqueleto';
     skeletonToggle.setAttribute('aria-pressed', String(state.showSkeleton));
-    if (!state.showSkeleton) handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+
+    if (!state.showSkeleton) {
+        handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+    }
 });
 
 menuToggle.addEventListener('click', () => {
@@ -447,30 +534,32 @@ menuToggle.addEventListener('click', () => {
 
 retryButton.addEventListener('click', () => location.reload());
 
-// --- Loop Principal (Com Deadzone Anti-Tremor) ---
-
+// --- Loop Principal ---
 function animate() {
     requestAnimationFrame(animate);
 
+    if (state.mode === 'imagem') {
+        // O motor renderizador da Imagem controla a matriz da âncora automaticamente
+        if (mindarThree && mindarThree.renderer) {
+            mindarThree.renderer.render(mindarThree.scene, mindarThree.camera);
+        }
+        return;
+    }
+
+    // Deadzones e Suavização para MediaPipe
     if (modelRoot) {
         const canMove = (state.mode === 'presa' && !state.locked) ||
             (state.mode === 'manipular' && state.manipulateGrabbed);
 
         if (canMove && state.handVisible) {
-            // Filtro Deadzone Espacial
-            const posDiff = modelRoot.position.distanceTo(state.targetPosition);
-            if (posDiff > 0.01) {
+            if (modelRoot.position.distanceTo(state.targetPosition) > 0.01) {
                 modelRoot.position.lerp(state.targetPosition, POSITION_LERP);
             }
-
-            // Filtro Deadzone Rotacional
-            const rotDiff = modelRoot.quaternion.angleTo(state.targetQuaternion);
-            if (rotDiff > 0.02) {
+            if (modelRoot.quaternion.angleTo(state.targetQuaternion) > 0.02) {
                 modelRoot.quaternion.slerp(state.targetQuaternion, ROTATION_LERP);
             }
         }
 
-        // Filtro Deadzone Escala
         if (Math.abs(state.targetScale - state.currentScale) > 0.005) {
             state.currentScale += (state.targetScale - state.currentScale) * SCALE_LERP;
             modelRoot.scale.setScalar(state.currentScale);
@@ -478,9 +567,12 @@ function animate() {
         }
     }
 
-    renderer.render(scene, camera);
+    baseRenderer.render(baseScene, baseCamera);
 }
 
 // --- Boot ---
-initThree();
+initBaseThree();
+initMindAR();
+loadModel();
 initMediaPipe();
+animate();
