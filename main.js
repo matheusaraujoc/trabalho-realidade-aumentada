@@ -140,6 +140,15 @@ function initMindAR() {
         filterMinCF: 0.001,
         filterBeta: 1000,
 
+        // missTolerance: quantos frames o target pode sumir antes de soltar a âncora.
+        // Default é 5 — muito baixo, qualquer tremor ou dedo na frente perde o target.
+        // Com 30, a logo permanece ancorada durante oclusões breves e movimentos rápidos.
+        missTolerance: 30,
+
+        // warmupTolerance: frames consecutivos necessários para ancorar pela primeira vez.
+        // Reduzir de 5 para 2 acelera o lock-on inicial sem comprometer a estabilidade.
+        warmupTolerance: 2,
+
         // Garante que o MindAR use a mesma câmera selecionada no app
         webcam: { facingMode: state.facingMode },
     });
@@ -242,11 +251,12 @@ async function switchMode(newMode) {
             // Recria o MindAR com o facingMode corrente — garante câmera certa
             initMindAR();
 
-            // Ancora o modelo no target; sem rotação manual:
-            // o próprio anchor.group já posiciona corretamente no espaço 3D.
+            // Ancora o modelo no target.
+            // O anchor.group alinha o plano XY com o target (papel plano),
+            // por isso o modelo precisa rotacionar 90° no eixo X para ficar em pé.
             mindarAnchor.group.add(modelRoot);
             modelRoot.position.set(0, 0, 0);
-            modelRoot.rotation.set(0, 0, 0);
+            modelRoot.rotation.set(Math.PI / 2, 0, 0);
 
             await mindarThree.start();
         }
@@ -546,7 +556,7 @@ cameraSelect.addEventListener('change', async (e) => {
         initMindAR();
         mindarAnchor.group.add(modelRoot);
         modelRoot.position.set(0, 0, 0);
-        modelRoot.rotation.set(0, 0, 0);
+        modelRoot.rotation.set(Math.PI / 2, 0, 0);
         try {
             await mindarThree.start();
         } catch (err) {
