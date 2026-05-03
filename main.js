@@ -44,7 +44,7 @@ const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/
 // --- Estado Global ---
 const state = {
     mode: 'presa', // 'presa' | 'manipular' | 'imagem'
-    facingMode: isMobile ? 'environment' : 'user', // Traseira no Mobile, Frontal no PC
+    facingMode: isMobile ? 'environment' : 'user',
     modelLoaded: false,
     cameraReady: false,
     handVisible: false,
@@ -61,7 +61,7 @@ const state = {
     targetQuaternion: new THREE.Quaternion(),
 };
 
-// --- Otimização de Memória (Original Restaurado) ---
+// --- Otimização de Memória ---
 const _vResult = new THREE.Vector3();
 const _vDir = new THREE.Vector3();
 const _wrist = new THREE.Vector3();
@@ -72,11 +72,12 @@ const _up = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _forward = new THREE.Vector3();
 const _mat4 = new THREE.Matrix4();
+const _quatScratch = new THREE.Quaternion();
 const _baseOffsetQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0));
 
 // --- Cenas AR ---
-let baseScene, baseCamera, baseRenderer; // Cena MediaPipe
-let mindarThree, mindarAnchor;           // Cena MindAR
+let baseScene, baseCamera, baseRenderer;
+let mindarThree, mindarAnchor;
 let modelRoot;
 let cameraHelper;
 
@@ -120,10 +121,12 @@ function setupLights(sceneObj) {
 // ==========================================
 // 2. Configuração do MindAR (Image Tracking)
 // ==========================================
-// ==========================================
-// 2. Configuração do MindAR (Image Tracking)
-// ==========================================
 function initMindAR() {
+    // Destrói instância anterior se existir, para evitar câmeras duplicadas
+    if (mindarThree) {
+        try { mindarThree.stop(); } catch (_) { }
+    }
+
     mindarThree = new MindARThree({
         container: mindarContainer,
         imageTargetSrc: 'assets/targets.mind',
@@ -131,18 +134,20 @@ function initMindAR() {
         uiScanning: 'no',
         uiError: 'no',
 
-        // --- ALTERAÇÃO CIRÚRGICA AQUI ---
-        // Valores ajustados para estabilidade máxima (efeito "fixo").
-        // filterMinCF: Reduzido drasticamente para eliminar tremores em repouso.
-        // filterBeta: Reduzido drasticamente para evitar que o objeto "flutue" ao mover a câmera.
-        filterMinCF: 0.000001, // Antes: 0.0001
-        filterBeta: 0.0001      // Antes: 0.001
-        // ---------------------------------
+        // filterMinCF baixo: logo estável quando o celular está parado.
+        // filterBeta alto: filtro reage quase instantaneamente ao movimento
+        // da câmera, dando a sensação de que a logo está "pregada" no target.
+        filterMinCF: 0.001,
+        filterBeta: 1000,
+
+        // Garante que o MindAR use a mesma câmera selecionada no app
+        webcam: { facingMode: state.facingMode },
     });
 
     setupLights(mindarThree.scene);
     mindarAnchor = mindarThree.addAnchor(0);
 }
+
 // ==========================================
 // 3. Carregamento do Modelo
 // ==========================================
@@ -162,7 +167,6 @@ function loadModel() {
         modelRoot = new THREE.Group();
         modelRoot.add(inner);
 
-        // Inicia na cena base (Mãos)
         modelRoot.position.copy(state.targetPosition);
         baseScene.add(modelRoot);
 
@@ -175,38 +179,47 @@ function loadModel() {
 }
 
 // ==========================================
-// 4. Lógica de Transição (O Core do Híbrido)
+// 4. Lógica de Transição
 // ==========================================
 async function switchMode(newMode) {
     if (state.mode === newMode) return;
     const oldMode = state.mode;
     state.mode = newMode;
 
-    loadingText.textContent = newMode === 'imagem' ? "Iniciando Rastreamento de Imagem..." : "Iniciando Rastreamento de Mãos...";
+    loadingText.textContent = newMode === 'imagem'
+        ? 'Iniciando Rastreamento de Imagem...'
+        : 'Iniciando Rastreamento de Mãos...';
     loadingScreen.style.display = 'flex';
     loadingScreen.style.opacity = '1';
 
     try {
         if (oldMode === 'imagem') {
-            mindarThree.stop();
+            // Para o MindAR e reativa MediaPipe
+            try { await mindarThree.stop(); } catch (_) { }
             mindarContainer.classList.add('hidden');
 
             videoEl.style.display = 'block';
             handCanvas.style.display = 'block';
             container.style.display = 'block';
 
+            // Devolve o modelo para a cena base
+            if (mindarAnchor && mindarAnchor.group.children.includes(modelRoot)) {
+                mindarAnchor.group.remove(modelRoot);
+            }
             baseScene.add(modelRoot);
             state.targetPosition.set(0, 0, FIXED_DEPTH);
             modelRoot.position.copy(state.targetPosition);
             modelRoot.rotation.set(0, 0, 0);
+            modelRoot.quaternion.identity();
 
             if (cameraHelper) {
                 await cameraHelper.start();
             } else {
                 initMediaPipe();
             }
-        }
-        else if (newMode === 'imagem') {
+
+        } else if (newMode === 'imagem') {
+            // Para MediaPipe
             if (cameraHelper) {
                 cameraHelper.stop();
                 const stream = videoEl.srcObject;
@@ -221,16 +234,19 @@ async function switchMode(newMode) {
 
             mindarContainer.classList.remove('hidden');
 
-            mindarAnchor.group.add(modelRoot);
-
-            modelRoot.position.set(0, 0, 0);
-
-            // Faz o logo ficar "em pé" na câmera traseira no modo imagem
-            if (state.facingMode === 'environment') {
-                modelRoot.rotation.set(Math.PI / 2, 0, 0);
-            } else {
-                modelRoot.rotation.set(0, 0, 0);
+            // Retira o modelo da cena base antes de recriar o MindAR
+            if (baseScene.children.includes(modelRoot)) {
+                baseScene.remove(modelRoot);
             }
+
+            // Recria o MindAR com o facingMode corrente — garante câmera certa
+            initMindAR();
+
+            // Ancora o modelo no target; sem rotação manual:
+            // o próprio anchor.group já posiciona corretamente no espaço 3D.
+            mindarAnchor.group.add(modelRoot);
+            modelRoot.position.set(0, 0, 0);
+            modelRoot.rotation.set(0, 0, 0);
 
             await mindarThree.start();
         }
@@ -238,7 +254,7 @@ async function switchMode(newMode) {
         updateUi();
     } catch (error) {
         console.error(error);
-        showError("Falha ao alternar as câmeras. Recarregue a página.");
+        showError('Falha ao alternar as câmeras. Recarregue a página.');
     } finally {
         setTimeout(() => {
             loadingScreen.style.opacity = '0';
@@ -248,7 +264,7 @@ async function switchMode(newMode) {
 }
 
 // ==========================================
-// Utils & MediaPipe Core (Matemática Original Restaurada)
+// Utils & MediaPipe Core
 // ==========================================
 function onResize() {
     const w = window.innerWidth, h = window.innerHeight;
@@ -305,10 +321,11 @@ function computeHandQuaternion(wlm, handednessLabel) {
     _right.crossVectors(_up, _forward).normalize();
     _mat4.makeBasis(_right, _up, _forward);
 
-    const q = new THREE.Quaternion().setFromRotationMatrix(_mat4);
-    q.multiply(_baseOffsetQuat);
+    // Reutiliza _quatScratch em vez de alocar new Quaternion() a cada frame
+    _quatScratch.setFromRotationMatrix(_mat4);
+    _quatScratch.multiply(_baseOffsetQuat);
 
-    return q;
+    return _quatScratch;
 }
 
 function updateModePresa(lm, wlm, handednessLabel) {
@@ -521,13 +538,25 @@ cameraSelect.addEventListener('change', async (e) => {
     updateMirrors();
 
     if (state.mode === 'imagem') {
-        await mindarThree.stop();
-        setTimeout(() => location.reload(), 150);
+        // No modo imagem, recria o MindAR com o novo facingMode
+        try { await mindarThree.stop(); } catch (_) { }
+        if (mindarAnchor && modelRoot) {
+            mindarAnchor.group.remove(modelRoot);
+        }
+        initMindAR();
+        mindarAnchor.group.add(modelRoot);
+        modelRoot.position.set(0, 0, 0);
+        modelRoot.rotation.set(0, 0, 0);
+        try {
+            await mindarThree.start();
+        } catch (err) {
+            showError('Falha ao trocar câmera no modo imagem.');
+        }
     } else {
         if (cameraHelper) {
             cameraHelper.stop();
-            initMediaPipe();
         }
+        initMediaPipe();
     }
 });
 
@@ -600,9 +629,8 @@ function animate() {
 }
 
 // --- Boot ---
-// Adapta a UI de acordo com o dispositivo
 if (!isMobile) {
-    if (cameraRow) cameraRow.style.display = 'none'; // Esconde opção de trocar câmera no PC
+    if (cameraRow) cameraRow.style.display = 'none';
 } else {
     if (cameraSelect) cameraSelect.value = state.facingMode;
 }
