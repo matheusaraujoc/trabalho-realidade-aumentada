@@ -23,6 +23,8 @@ const menuToggle = document.getElementById('menu-toggle');
 const uiPanel = document.getElementById('ui-panel');
 const retryButton = document.getElementById('retry-button');
 const modeRadios = document.querySelectorAll('input[name="ar-mode"]');
+const cameraRow = document.getElementById('camera-select-row');
+const cameraSelect = document.getElementById('camera-select');
 
 // --- Constantes ---
 const FIXED_DEPTH = -4;
@@ -36,9 +38,13 @@ const SCALE_LERP = 0.08;
 const HAND_LOST_FRAMES = 12;
 const PINCH_DROP_THRESHOLD = 0.18;
 
+// --- Verificação de Dispositivo ---
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
 // --- Estado Global ---
 const state = {
     mode: 'presa', // 'presa' | 'manipular' | 'imagem'
+    facingMode: isMobile ? 'environment' : 'user', // Traseira no Mobile, Frontal no PC
     modelLoaded: false,
     cameraReady: false,
     handVisible: false,
@@ -55,7 +61,7 @@ const state = {
     targetQuaternion: new THREE.Quaternion(),
 };
 
-// --- Otimização de Memória ---
+// --- Otimização de Memória (Original Restaurado) ---
 const _vResult = new THREE.Vector3();
 const _vDir = new THREE.Vector3();
 const _wrist = new THREE.Vector3();
@@ -87,7 +93,6 @@ function initBaseThree() {
     baseRenderer.setSize(window.innerWidth, window.innerHeight);
     baseRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-    // Corrigido para a versão r147 do Three.js (compatibilidade com MindAR)
     baseRenderer.outputEncoding = THREE.sRGBEncoding;
     baseRenderer.toneMapping = THREE.ACESFilmicToneMapping;
     baseRenderer.toneMappingExposure = 1.0;
@@ -119,16 +124,11 @@ function initMindAR() {
     mindarThree = new MindARThree({
         container: mindarContainer,
         imageTargetSrc: 'assets/targets.mind',
-
-        // Remove completamente qualquer UI injetada pelo MindAR
         uiLoading: 'no',
         uiScanning: 'no',
         uiError: 'no',
-
-        // Filtro Anti-Tremor (1 Euro Filter)
-        // Valores ajustados para estabilidade máxima
-        filterMinCF: 0.0001, // Filtro de corte (quanto menor, mais suave, elimina os tremores minúsculos)
-        filterBeta: 0.001    // Responsividade (compensa o atraso gerado pelo filtroMinCF)
+        filterMinCF: 0.0001,
+        filterBeta: 0.001
     });
 
     setupLights(mindarThree.scene);
@@ -179,35 +179,32 @@ async function switchMode(newMode) {
     loadingScreen.style.opacity = '1';
 
     try {
-        // Desmontar Rastreamento de Imagem
         if (oldMode === 'imagem') {
             mindarThree.stop();
             mindarContainer.classList.add('hidden');
 
-            // Reativa UI da mão
             videoEl.style.display = 'block';
             handCanvas.style.display = 'block';
             container.style.display = 'block';
 
-            // Devolve modelo para a cena base
             baseScene.add(modelRoot);
             state.targetPosition.set(0, 0, FIXED_DEPTH);
             modelRoot.position.copy(state.targetPosition);
+            modelRoot.rotation.set(0, 0, 0);
 
-            // Re-inicia câmera frontal
-            await cameraHelper.start();
+            if (cameraHelper) {
+                await cameraHelper.start();
+            } else {
+                initMediaPipe();
+            }
         }
-
-        // Montar Rastreamento de Imagem
         else if (newMode === 'imagem') {
-            // Desliga câmera frontal
             if (cameraHelper) {
                 cameraHelper.stop();
                 const stream = videoEl.srcObject;
                 if (stream) stream.getTracks().forEach(t => t.stop());
             }
 
-            // Esconde UI da mão
             videoEl.style.display = 'none';
             handCanvas.style.display = 'none';
             container.style.display = 'none';
@@ -216,12 +213,16 @@ async function switchMode(newMode) {
 
             mindarContainer.classList.remove('hidden');
 
-            // Move modelo para a âncora do MindAR
             mindarAnchor.group.add(modelRoot);
 
-            // No MindAR, as coordenadas são relativas ao marcador (0,0,0)
             modelRoot.position.set(0, 0, 0);
-            modelRoot.quaternion.identity();
+
+            // Faz o logo ficar "em pé" na câmera traseira no modo imagem
+            if (state.facingMode === 'environment') {
+                modelRoot.rotation.set(Math.PI / 2, 0, 0);
+            } else {
+                modelRoot.rotation.set(0, 0, 0);
+            }
 
             await mindarThree.start();
         }
@@ -239,7 +240,7 @@ async function switchMode(newMode) {
 }
 
 // ==========================================
-// Utils & MediaPipe Core
+// Utils & MediaPipe Core (Matemática Original Restaurada)
 // ==========================================
 function onResize() {
     const w = window.innerWidth, h = window.innerHeight;
@@ -456,6 +457,12 @@ function updateUi() {
     }
 }
 
+function updateMirrors() {
+    const isUser = state.facingMode === 'user';
+    videoEl.style.transform = isUser ? 'scaleX(-1)' : 'none';
+    handCanvas.style.transform = isUser ? 'scaleX(-1)' : 'none';
+}
+
 async function initMediaPipe() {
     if (typeof Hands !== 'function' || typeof Camera !== 'function') {
         showError('Bibliotecas do MediaPipe não carregaram.');
@@ -469,7 +476,7 @@ async function initMediaPipe() {
     hands.setOptions({
         maxNumHands: 1,
         modelComplexity: 1,
-        minDetectionConfidence: 0.7,
+        minDetectionConfidence: state.facingMode === 'environment' ? 0.75 : 0.7,
         minTrackingConfidence: 0.85,
     });
     hands.onResults(onResults);
@@ -480,6 +487,7 @@ async function initMediaPipe() {
                 await hands.send({ image: videoEl });
             }
         },
+        facingMode: state.facingMode,
         width: 1280,
         height: 720,
     });
@@ -489,7 +497,7 @@ async function initMediaPipe() {
         state.cameraReady = true;
         maybeHideLoading();
     } catch (err) {
-        showError('Não foi possível iniciar a câmera frontal.');
+        showError('Não foi possível iniciar a câmera.');
     }
 }
 
@@ -498,6 +506,21 @@ modeRadios.forEach(radio => {
     radio.addEventListener('change', (e) => {
         switchMode(e.target.value);
     });
+});
+
+cameraSelect.addEventListener('change', async (e) => {
+    state.facingMode = e.target.value;
+    updateMirrors();
+
+    if (state.mode === 'imagem') {
+        await mindarThree.stop();
+        setTimeout(() => location.reload(), 150);
+    } else {
+        if (cameraHelper) {
+            cameraHelper.stop();
+            initMediaPipe();
+        }
+    }
 });
 
 resetButton.addEventListener('click', () => {
@@ -539,14 +562,12 @@ function animate() {
     requestAnimationFrame(animate);
 
     if (state.mode === 'imagem') {
-        // O motor renderizador da Imagem controla a matriz da âncora automaticamente
         if (mindarThree && mindarThree.renderer) {
             mindarThree.renderer.render(mindarThree.scene, mindarThree.camera);
         }
         return;
     }
 
-    // Deadzones e Suavização para MediaPipe
     if (modelRoot) {
         const canMove = (state.mode === 'presa' && !state.locked) ||
             (state.mode === 'manipular' && state.manipulateGrabbed);
@@ -571,6 +592,15 @@ function animate() {
 }
 
 // --- Boot ---
+// Adapta a UI de acordo com o dispositivo
+if (!isMobile) {
+    if (cameraRow) cameraRow.style.display = 'none'; // Esconde opção de trocar câmera no PC
+} else {
+    if (cameraSelect) cameraSelect.value = state.facingMode;
+}
+
+updateMirrors();
+
 initBaseThree();
 initMindAR();
 loadModel();
