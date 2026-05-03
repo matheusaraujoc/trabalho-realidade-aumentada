@@ -134,11 +134,20 @@ function initMindAR() {
         uiScanning: 'no',
         uiError: 'no',
 
-        // filterMinCF baixo: logo estável quando o celular está parado.
-        // filterBeta alto: filtro reage quase instantaneamente ao movimento
-        // da câmera, dando a sensação de que a logo está "pregada" no target.
-        filterMinCF: 0.001,
-        filterBeta: 1000,
+        // OneEuroFilter — fc(t) = filterMinCF + filterBeta × velocidade_estimada
+        //
+        // filterMinCF: frequência de corte mínima (em repouso).
+        //   Quanto menor, mais suavização quando o target está parado → sem jitter.
+        //   0.00001 = suavização muito forte; sobe para 0.0001 se quiser resposta
+        //   mais rápida ao lock inicial.
+        //
+        // filterBeta: coeficiente de velocidade.
+        //   Aumenta a frequência de corte proporcionalmente à velocidade detectada,
+        //   permitindo que movimentos reais da câmera passem pelo filtro.
+        //   0.5 = responde bem ao movimento real sem amplificar ruído de pose.
+        //   Com 1000 (valor anterior) o ruído de pose era amplificado → logo tremia.
+        filterMinCF: 0.00001,
+        filterBeta: 0.5,
 
         // missTolerance: quantos frames o target pode sumir antes de soltar a âncora.
         // Default é 5 — muito baixo, qualquer tremor ou dedo na frente perde o target.
