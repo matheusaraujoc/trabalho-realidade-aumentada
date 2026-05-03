@@ -120,6 +120,9 @@ function setupLights(sceneObj) {
 // ==========================================
 // 2. Configuração do MindAR (Image Tracking)
 // ==========================================
+// ==========================================
+// 2. Configuração do MindAR (Image Tracking)
+// ==========================================
 function initMindAR() {
     mindarThree = new MindARThree({
         container: mindarContainer,
@@ -127,14 +130,19 @@ function initMindAR() {
         uiLoading: 'no',
         uiScanning: 'no',
         uiError: 'no',
-        filterMinCF: 0.0001,
-        filterBeta: 0.001
+
+        // --- ALTERAÇÃO CIRÚRGICA AQUI ---
+        // Valores ajustados para estabilidade máxima (efeito "fixo").
+        // filterMinCF: Reduzido drasticamente para eliminar tremores em repouso.
+        // filterBeta: Reduzido drasticamente para evitar que o objeto "flutue" ao mover a câmera.
+        filterMinCF: 0.000001, // Antes: 0.0001
+        filterBeta: 0.0001      // Antes: 0.001
+        // ---------------------------------
     });
 
     setupLights(mindarThree.scene);
     mindarAnchor = mindarThree.addAnchor(0);
 }
-
 // ==========================================
 // 3. Carregamento do Modelo
 // ==========================================
