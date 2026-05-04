@@ -239,9 +239,10 @@ async function switchMode(newMode) {
         } else if (newMode === 'imagem') {
             // Para MediaPipe
             if (cameraHelper) {
-                cameraHelper.stop();
                 const stream = videoEl.srcObject;
+                cameraHelper.stop();
                 if (stream) stream.getTracks().forEach(t => t.stop());
+                videoEl.srcObject = null;
             }
 
             videoEl.style.display = 'none';
